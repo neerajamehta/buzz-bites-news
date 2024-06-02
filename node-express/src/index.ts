@@ -9,15 +9,13 @@ dotenv.config();
 
 const app: Express = express();
 const port = process.env.PORT || 3000;
-const newsApiKey = process.env.NEWS_API_KEY;
-const googleAiApiKey = process.env.GOOGLE_AI_API_KEY;
 let processedData: any = null;
 
 app.use(cors())
 
-cron.schedule('00 * * * *', async () => {
+cron.schedule('46 * * * *', async () => {
   console.log('Fetching news data...');
-  processedData = await newsMain(newsApiKey, googleAiApiKey);
+  processedData = await newsMain();
 });
 
 app.get('/news', async (req, res) => {
@@ -37,11 +35,33 @@ app.get('/database', async (req, res, next) => {
   let client;
   try {
     client = await pool.connect();
-    const { rows } = await client.query(`SELECT * from articles`);
+    const { rows } = await client.query(`SELECT * from articles ORDER BY processedtime`);
     res.send(rows);
   } catch (error) {
     console.error('Error fetching data from database:', error);
     res.status(500).json({ error: 'An error occurred while fetching data from database' });
+  } finally {
+    if(client)
+    client.release();
+}
+});
+
+app.get('/database/:category', async (req, res, next) => {
+  let client;
+  const {category} = req.params;
+  try {
+    client = await pool.connect();
+    if(category === 'all'){
+      const { rows } = await client.query(`SELECT * from articles ORDER BY addToDatabaseTime DESC;`);
+      res.send(rows);
+    }
+    else{
+      const { rows } = await client.query(`SELECT * from articles WHERE category = $1 ORDER BY addToDatabaseTime DESC;`, [category]);
+      res.send(rows);
+    }
+  } catch (error) {
+    console.error('Error fetching data by category:', error);
+    res.status(500).json({ error: 'An error occurred while fetching data by category' });
   } finally {
     if(client)
     client.release();

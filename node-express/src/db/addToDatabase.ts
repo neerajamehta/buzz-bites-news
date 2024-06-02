@@ -1,30 +1,34 @@
+import { ProcessedArticle } from '../types/article';
 import pool from './db-setup';
 
-async function addToDatabase(processedData: any[]) {
+async function addToDatabase(processedData: ProcessedArticle[]) {
     try {
         const client = await pool.connect();
         try {
             await client.query('BEGIN');
             for (const data of processedData) {
-                if(data.title && data.content && data.imageUrl){
+                if(data.image && data.author){
                     const query = `
-                        INSERT INTO articles (category, title, content, publisher, author, url, imageUrl, publishTime, processedTime)
-                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+                        INSERT INTO articles (category, title, content, publisher, author, url, image, publishedTime, processedTime, addToDatabaseTime)
+                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
+                        ON CONFLICT (title) DO NOTHING
                     `;
                     
                     await client.query(query, [
-                        data.newsCategory,
+                        data.category,
                         data.title,
                         data.content,
                         data.publisher,
                         data.author,
                         data.url,
-                        data.imageUrl,
-                        data.publishTime
+                        data.image,
+                        data.publishedTime,
+                        data.processedTime,
                     ]);
                 }
             }
-            await client.query('COMMIT');           
+            await client.query('COMMIT');
+            console.log("Added to database");         
         } catch (error) {
             await client.query('ROLLBACK');
             throw error; // Rethrow the error to handle it in the caller

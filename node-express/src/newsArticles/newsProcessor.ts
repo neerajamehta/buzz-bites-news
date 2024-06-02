@@ -1,90 +1,76 @@
-import { HarmBlockThreshold, HarmCategory } from "@google/generative-ai";
+require ("dotenv").config()
+import { ProcessedArticle, RawArticle } from "../types/article";
+import { safetySettings } from "../constants/safetySettings";
 
 const { JSDOM } = require('jsdom');
 const { Readability } = require('@mozilla/readability');
 const axios = require('axios');
 const { GoogleGenerativeAI } = require("@google/generative-ai");
+const googleAiApiKey = process.env.GOOGLE_AI_API_KEY;
 
-interface RawArticle {
-    source: {
-        id: string | null; 
-        name: string;
-    };
-    author: string | null; 
-    title: string;
-    description: string;
-    url: string;
-    urlToImage: string | null;
-    publishedAt: string;
-    content: string;
-}
-
-interface RawNewsData {
-    articles: RawArticle[];
-}
-
-const safetySettings = [
-    {
-      category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
-      threshold: HarmBlockThreshold.BLOCK_NONE,
-    },
-    {
-        category: HarmCategory.HARM_CATEGORY_HARASSMENT,
-        threshold: HarmBlockThreshold.BLOCK_NONE,
-    },
-    {
-        category: HarmCategory.HARM_CATEGORY_HATE_SPEECH,
-        threshold: HarmBlockThreshold.BLOCK_NONE,
-    },
-    {
-        category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
-        threshold: HarmBlockThreshold.BLOCK_NONE,
-    },
-  ];
-
-async function processNewsDataToArray(newsDataJson: RawNewsData, newsCategory: string, googleAiApiKey: string | undefined) {
+async function processNewsDataToArray(newsDataJson: RawArticle[], newsCategory: string) {
     const genAI = new GoogleGenerativeAI(googleAiApiKey);
     const model = genAI.getGenerativeModel({ model: "gemini-pro", safetySettings});
-  
-    const prompt = "Summarize the article in a paragraph within 80 words."
+
     try {
-        if (!newsDataJson || !newsDataJson.articles) {
+        if (!newsDataJson) {
             throw new Error('Invalid news data format');
         }
 
-        const articles = newsDataJson.articles;
-        for (let i = 0; i < articles.length; i++) {
-            const article = articles[i];
+        // gets whole article text content and stores it in content
+        for (const article of newsDataJson){
             let textContent = await getArticleTextContent(article.url);
-            if(textContent != ''){
-                textContent = textContent.replace(/\n/g, '');
-                textContent = textContent.replace(/\s{2,}/g, ' ');
+            if (textContent && textContent != '') {
+                textContent = textContent.replace(/\n/g, '').replace(/\s{2,}/g, ' ');
+                article.content = textContent;
             }
-            article.content = textContent;
+            else{
+                article.content = '';
+            }
+            
         }
 
-        for (let i = 0; i < articles.length; i++) {
-            const article = articles[i];
-            if(article.content != ''){
-                const result = await model.generateContent(prompt + article.content);
+        // removes article with less content or null content
+       const rawArticles = newsDataJson.filter(article => 
+            article.author &&
+            article.title &&
+            article.urlToImage &&
+            article.source?.name &&
+            article.url &&
+            article.content &&
+            article.content.trim() !== ''
+        );
+
+        // summarizes content and updates content with summarized value
+        for (const article of rawArticles){
+            try {
+                const result = await model.generateContent(process.env.PROMPT + article.content);
                 const response = await result.response;
-                const text = response.text();
+                const text = await response.text();
                 article.content = text ?? null;
+            } catch (e) {
+                console.error('Error generating content for article:', e);
+                article.content = '';
             }
         }
 
-        const processedArray = articles.map(article => ({
+        // removes articles with invalid summaries
+        const validRawArticles = rawArticles.filter((article) => 
+            article.content && article.content.length >= 200
+        )
+
+        const processedArticles: ProcessedArticle[] = validRawArticles.map(article => ({
+            category: newsCategory,
             title: article.title,
-            newsCategory: newsCategory,
-            content: article.content === '' ? null : article.content,
+            content: article.content,
             publisher: article.source?.name,
             author: article.author,
             url: article.url,
-            imageUrl: article.urlToImage,
-            publishTime: article.publishedAt ?? new Date().toISOString(), // Using current time if publishedAt is null
-            processedTime: Date.now()
+            image: article.urlToImage,
+            publishedTime: article.publishedAt ?? new Date().toISOString(), // Using current time if publishedAt is null
+            processedTime: new Date().toISOString(),
         }));
-        return processedArray;
+        return processedArticles;
     } catch (error) {
         console.error('Error processing news data:', error);
         return [];
@@ -98,11 +84,19 @@ async function getArticleTextContent(url: string){
         const dom = new JSDOM(html, {
             url: url
         });
+
+        await new Promise(resolve => {
+            dom.window.document.addEventListener('DOMContentLoaded', resolve);
+        });
+
         const article = new Readability(dom.window.document).parse();
+        if (!article || !article.textContent) {
+            throw new Error('Failed to parse article');
+        }
         return article.textContent
     }
     catch(error){
-        console.error('Error fetching article content', error);
+        console.error('Error fetching or parsing article content ' + url, error);
         return '';
     }
 }

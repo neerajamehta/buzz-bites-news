@@ -1,9 +1,11 @@
-const axios = require('axios');
+require ("dotenv").config()
 
-async function fetchNewsData(url: string, apiKey: string | undefined): Promise<any> {
-    
+const axios = require('axios');
+const newsApiKey = process.env.NEWS_API_KEY;
+
+async function fetchNewsData(category: string): Promise<any> {
         try {
-            const response = await axios.get(url+apiKey);
+            const response = await axios.get(`https://newsapi.org/v2/top-headlines?country=us&category=${category}&apiKey=${newsApiKey}`);
             return response.data;
         } catch (error) {
             console.error('Error fetching news data:', error);
